@@ -1,3 +1,8 @@
+# Project: WiFi Manager
+# Author: Igor Ferreira
+# Description: An updated and optimized wifi manager library for ESP chips, written in MicroPython.
+# Source: https://github.com/h1pn0z/micropython-wifi_manager/
+
 import network
 import ure
 try:
