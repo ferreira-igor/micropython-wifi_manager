@@ -2,7 +2,7 @@
 
 <b>Warnings:</b>
 
-- It was only tested using the MicroPython v1.13 and the ESP8266 and ESP32 from Wemos boards.
+- It was only tested using the MicroPython v1.13 on the Wemos ESP8266 and ESP32 boards.
 - Your ssid and password information will be saved in plain text file (wifi.dat) in your ESP module for future usage. Be careful about security!
 
 <b>Description:</b>
