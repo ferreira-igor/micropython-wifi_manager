@@ -17,7 +17,7 @@ except:
 
 class WifiManager:
 
-    def __init__(self, ssid = "WifiManager", password = "wifimanager", ip = "1.2.3.4", timeout = None):
+    def __init__(self, ssid = "WifiManager", password = "wifimanager", ip = None, timeout = 5.0):
         self.wlan_sta = network.WLAN(network.STA_IF)
         self.wlan_sta.active(True)
         self.wlan_ap = network.WLAN(network.AP_IF)
@@ -25,38 +25,36 @@ class WifiManager:
         self.ap_password = password
         self.ap_ip = ip
         self.ap_timeout = timeout
+        # Sets the wifi authentication mode to WPA2-PSK.
         self.ap_authmode = 3
         self.sta_profiles = "wifi.dat"
+        # Forces a new scan and connection to avoid problems with ESP trying to automatically connect to the last used network.
         self.wlan_sta.disconnect()
 
     def check_connection(self):
         # If it's already connected, why to connect again?
         if self.wlan_sta.isconnected():
             return True
-        else:
-            # Here we read the previous saved credentials and make a scan, if a network name matches, we try to connect to it.
-            profiles = self.read_profiles()
-            for ssid, *_ in self.wlan_sta.scan():
-                ssid = ssid.decode("utf-8")
-                if ssid in profiles:
-                    password = profiles[ssid]
-                    if self.wifi_connect(ssid, password):
-                        return True
-                    else:
-                        print("It didn't work, let's try the next one!")
+        # Here we read the previous saved credentials and make a scan, if a network name matches, we try to connect to it.
+        profiles = self.read_profiles()
+        for ssid, *_ in self.wlan_sta.scan():
+            ssid = ssid.decode("utf-8")
+            if ssid in profiles:
+                password = profiles[ssid]
+                if self.wifi_connect(ssid, password):
+                    return True
                 else:
-                    print("Skipping unknown network:", ssid)
-            # And if it fail to connect we start the captive portal.
-            print("Could not connect to any WiFi network. Starting the captive portal...")
-            if self.start_server():
-                return True
+                    print("It didn't work, let's try the next one!")
             else:
-                return False
+                print("Skipping unknown network:", ssid)
+        # And if it fails to connect we start the captive portal.
+        print("Could not connect to any WiFi network. Starting the captive portal...")
+        return self.web_server()
 
     def write_profiles(self, profiles):
         lines = []
         for ssid, password in profiles.items():
-            lines.append("%s;%s\n" % (ssid, password))
+            lines.append("{0};{1}\n".format(ssid, password))
         with open(self.sta_profiles, "w") as myfile:
             myfile.write("".join(lines))
 
@@ -64,8 +62,8 @@ class WifiManager:
         try:
             with open(self.sta_profiles) as myfile:
                 lines = myfile.readlines()
-        except OSError as e:
-            print("Could not open", self.sta_profiles, "file.", e)
+        except OSError:
+            print("Could not open", self.sta_profiles)
             lines = []
             pass
         profiles = {}
@@ -91,12 +89,13 @@ class WifiManager:
 
     # Here starts the web server part
     
-    def start_server(self):
+    def web_server(self):
         # Let's start by activating the access point interface and then configuring it.
         print("Activating access point...")
         self.wlan_ap.active(True)
         self.wlan_ap.config(essid = self.ap_ssid, password = self.ap_password, authmode = self.ap_authmode)
-        self.wlan_ap.ifconfig((self.ap_ip, "255.255.255.0", self.ap_ip, self.ap_ip))
+        if self.ap_ip:
+            self.wlan_ap.ifconfig((self.ap_ip, "255.255.255.0", self.ap_ip, self.ap_ip))
         # Close any open socket, just in case.
         server_socket = socket.socket()
         server_socket.close()
@@ -105,26 +104,32 @@ class WifiManager:
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind(("", 80))
         server_socket.listen(1)
-        print("Connect to", self.ap_ssid, "with the password", self.ap_password, "and access the captive portal at", self.ap_ip)
+        print("Connect to", self.ap_ssid, "with the password", self.ap_password, "and access the captive portal at", self.wlan_ap.ifconfig()[0])
         while True:
             if self.wlan_sta.isconnected():
                 # Once we succeed to connect, we don't need the access point anymore.
                 print("Deactivating access point...")
                 self.wlan_ap.active(False)
                 return True
-            else:
-                self.client, addr = server_socket.accept()
-                print("Client connected from:", addr)
+            self.client, addr = server_socket.accept()
+            print("Client connected from:", addr)
+            try:
+                self.client.settimeout(self.ap_timeout)
+                self.request = b""
                 try:
-                    self.client.settimeout(self.ap_timeout)
-                    self.request = b""
-                    try:
-                        while "\r\n\r\n" not in self.request:
+                    while True:
+                        if "\r\n\r\n" in self.request:
+                            # Fix for Safari
+                            self.request += self.client.recv(512)
+                            break
+                        else:
                             self.request += self.client.recv(128)
-                    except OSError as e:
-                        print("Request timed out...", e)
-                        return False
-                    # After that we regex search for the specific url in the request string, and then proceed as needed.
+                except OSError as e:
+                    print(e)
+                    pass
+                # Here we regex search for the specific url in the request string, and then proceed as needed.
+                if self.request:
+                    print("REQUEST DATA:", self.request)
                     url = ure.search("(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP", self.request).group(1).decode("utf-8").rstrip("/")
                     if url == "":
                         self.handle_root()
@@ -132,15 +137,16 @@ class WifiManager:
                         self.handle_configure()
                     else:
                         self.handle_not_found()
-                except OSError as e:
-                    print(e)
-                    return False
-                finally:
-                    self.client.close()
+            except OSError as e:
+                print(e)
+                return False
+            finally:
+                self.client.close()
 
     def send_header(self, status_code = 200):
         self.client.send("HTTP/1.1 {0} OK\r\n".format(status_code))
         self.client.send("Content-Type: text/html\r\n")
+        self.client.send("Connection: close\r\n")
 
     def send_response(self, message, status_code = 200):
         self.send_header(status_code)
@@ -151,6 +157,7 @@ class WifiManager:
                     <title>{0}</title>
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <link rel="icon" href="data:,">
                 </head>
                 <body>
                     <p>{1}</p>
@@ -168,19 +175,21 @@ class WifiManager:
                     <title>{0}</title>
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <link rel="icon" href="data:,">
                 </head>
                 <body>
                     <h1>WiFi Setup</h1>
-                    <form action="configure" method="post">
+                    <p>To connect to an open network, leave the password field blank.</p>
+                    <form action="/configure" method="post" accept-charset="utf-8">
         """.format(self.ap_ssid))
         for ssid, *_ in self.wlan_sta.scan():
             ssid = ssid.decode("utf-8")
             self.client.sendall("""
-                        <p><input type="radio" name="ssid" id="{0}" value="{0}"><label for="{0}">&nbsp;{0}</label></p>
+                        <p><input type="radio" name="ssid" value="{0}" id="{0}"><label for="{0}">&nbsp;{0}</label></p>
             """.format(ssid))
         self.client.sendall("""
                         <p><label for="password">Password:&nbsp;</label><input type="password" id="password" name="password"></p>
-                        <p><input type="submit" value="Connect!"></p>
+                        <p><input type="submit" value="Connect"></p>
                     </form>
                 </body>
             </html>
