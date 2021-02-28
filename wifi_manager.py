@@ -17,14 +17,16 @@ except:
 
 class WifiManager:
 
-    def __init__(self, ssid = "WifiManager", password = "wifimanager", ip = None, timeout = 5.0):
+    def __init__(self, ssid = "WifiManager", password = "wifimanager", ip = None):
         self.wlan_sta = network.WLAN(network.STA_IF)
         self.wlan_sta.active(True)
         self.wlan_ap = network.WLAN(network.AP_IF)
         self.ap_ssid = ssid
-        self.ap_password = password
+        if len(password) < 8:
+            raise Exception("Your password must be at least 8 characters long.")
+        else:
+            self.ap_password = password
         self.ap_ip = ip
-        self.ap_timeout = timeout
         # Sets the wifi authentication mode to WPA2-PSK.
         self.ap_authmode = 3
         self.sta_profiles = "wifi.dat"
@@ -68,7 +70,7 @@ class WifiManager:
             pass
         profiles = {}
         for line in lines:
-            ssid, password = line.strip("\n").split(";")
+            ssid, password = line.strip().split(";")
             profiles[ssid] = password
         return profiles
 
@@ -114,7 +116,7 @@ class WifiManager:
             self.client, addr = server_socket.accept()
             print("Client connected from:", addr)
             try:
-                self.client.settimeout(self.ap_timeout)
+                self.client.settimeout(5.0)
                 self.request = b""
                 try:
                     while True:
@@ -122,14 +124,14 @@ class WifiManager:
                             # Fix for Safari
                             self.request += self.client.recv(512)
                             break
-                        else:
-                            self.request += self.client.recv(128)
+                        self.request += self.client.recv(128)
                 except OSError as e:
                     print(e)
                     pass
-                # Here we regex search for the specific url in the request string, and then proceed as needed.
+                # Avoid blank requests.
                 if self.request:
                     print("REQUEST DATA:", self.request)
+                    # Here we regex search for the specific url in the request string, and then proceed as needed.
                     url = ure.search("(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP", self.request).group(1).decode("utf-8").rstrip("/")
                     if url == "":
                         self.handle_root()
@@ -137,7 +139,7 @@ class WifiManager:
                         self.handle_configure()
                     else:
                         self.handle_not_found()
-            except OSError as e:
+            except Exception as e:
                 print(e)
                 return False
             finally:
