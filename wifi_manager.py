@@ -1,187 +1,196 @@
-# Project: WiFi Manager
 # Author: Igor Ferreira
-# Description: An updated and optimized wifi manager library for ESP chips, written in MicroPython.
-# Source: https://github.com/h1pn0z/micropython-wifi_manager/
+# License: MIT
+# Version: 2.0.0
+# Description: WiFi Manager for ESP8266 and ESP32 using MicroPython.
 
+import machine
 import network
+import usocket
 import ure
-try:
-    import usocket as socket
-except:
-    import socket
-try:
-    import utime as time
-except:
-    import time
+import utime
 
 
 class WifiManager:
 
-    def __init__(self, ssid = "WifiManager", password = "wifimanager", ip = None):
+    def __init__(self, ssid = 'WifiManager', password = 'wifimanager'):
         self.wlan_sta = network.WLAN(network.STA_IF)
         self.wlan_sta.active(True)
         self.wlan_ap = network.WLAN(network.AP_IF)
-        self.ap_ssid = ssid
+        
+        # Avoids simple mistakes with wifi ssid and password lengths, but doesn't check for forbidden or unsupported characters.
+        if len(ssid) > 32:
+            raise Exception('The SSID cannot be longer than 32 characters.')
+        else:
+            self.ap_ssid = ssid
         if len(password) < 8:
-            raise Exception("Your password must be at least 8 characters long.")
+            raise Exception('The password cannot be less than 8 characters long.')
         else:
             self.ap_password = password
-        self.ap_ip = ip
-        # Sets the wifi authentication mode to WPA2-PSK.
+            
+        # Set the access point authentication mode to WPA2-PSK.
         self.ap_authmode = 3
-        self.sta_profiles = "wifi.dat"
-        # Forces a new scan and connection to avoid problems with ESP trying to automatically connect to the last used network.
+        
+        # The file were the credentials will be stored.
+        # There is no encryption, it's just a plain text archive. Be aware of this security problem!
+        self.sta_profiles = 'wifi.dat'
+        
+        # Prevents the device from automatically trying to connect to the last saved network without first going through the steps defined in the code.
         self.wlan_sta.disconnect()
+        
+        # Change to True if you want the device to reboot after configuration.
+        # Useful if you're having problems with web server applications after WiFi configuration.
+        self.reboot = False
 
-    def check_connection(self):
-        # If it's already connected, why to connect again?
+
+    def connect(self):
         if self.wlan_sta.isconnected():
-            return True
-        # Here we read the previous saved credentials and make a scan, if a network name matches, we try to connect to it.
-        profiles = self.read_profiles()
+            return
+        profiles = self.__ReadProfiles()
         for ssid, *_ in self.wlan_sta.scan():
             ssid = ssid.decode("utf-8")
             if ssid in profiles:
                 password = profiles[ssid]
-                if self.wifi_connect(ssid, password):
-                    return True
-                else:
-                    print("It didn't work, let's try the next one!")
-            else:
-                print("Skipping unknown network:", ssid)
-        # And if it fails to connect we start the captive portal.
-        print("Could not connect to any WiFi network. Starting the captive portal...")
-        return self.web_server()
+                if self.__WifiConnect(ssid, password):
+                    return
+        print('Could not connect to any WiFi network. Starting the configuration portal...')
+        self.__WebServer()
+        
+    
+    def disconnect(self):
+        if self.wlan_sta.isconnected():
+            self.wlan_sta.disconnect()
 
-    def write_profiles(self, profiles):
+
+    def is_connected(self):
+        return self.wlan_sta.isconnected()
+
+
+    def get_address(self):
+        return self.wlan_sta.ifconfig()
+
+
+    def __WriteProfiles(self, profiles):
         lines = []
         for ssid, password in profiles.items():
-            lines.append("{0};{1}\n".format(ssid, password))
-        with open(self.sta_profiles, "w") as myfile:
-            myfile.write("".join(lines))
+            lines.append('{0};{1}\n'.format(ssid, password))
+        with open(self.sta_profiles, 'w') as myfile:
+            myfile.write(''.join(lines))
 
-    def read_profiles(self):
+
+    def __ReadProfiles(self):
         try:
             with open(self.sta_profiles) as myfile:
                 lines = myfile.readlines()
         except OSError:
-            print("Could not open", self.sta_profiles)
             lines = []
             pass
         profiles = {}
         for line in lines:
-            ssid, password = line.strip().split(";")
+            ssid, password = line.strip().split(';')
             profiles[ssid] = password
         return profiles
 
-    def wifi_connect(self, ssid, password):
-        print("Trying to connect to:", ssid)
+
+    def __WifiConnect(self, ssid, password):
+        print('Trying to connect to:', ssid)
         self.wlan_sta.connect(ssid, password)
         for _ in range(100):
             if self.wlan_sta.isconnected():
-                print("\nConnected! Network information:", self.wlan_sta.ifconfig())
+                print('\nConnected! Network information:', self.wlan_sta.ifconfig())
                 return True
             else:
-                print(".", end="")
-                time.sleep_ms(100)
-        print("\nConnection failed!")
-        # Avoids a rescan block.
+                print('.', end='')
+                utime.sleep_ms(100)
+        print('\nConnection failed!')
         self.wlan_sta.disconnect()
         return False
 
-    # Here starts the web server part
     
-    def web_server(self):
-        # Let's start by activating the access point interface and then configuring it.
-        print("Activating access point...")
+    def __WebServer(self):
         self.wlan_ap.active(True)
         self.wlan_ap.config(essid = self.ap_ssid, password = self.ap_password, authmode = self.ap_authmode)
-        if self.ap_ip:
-            self.wlan_ap.ifconfig((self.ap_ip, "255.255.255.0", self.ap_ip, self.ap_ip))
-        # Close any open socket, just in case.
-        server_socket = socket.socket()
+        server_socket = usocket.socket()
         server_socket.close()
-        # Open a new socket.
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.bind(("", 80))
+        server_socket = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
+        server_socket.setsockopt(usocket.SOL_SOCKET, usocket.SO_REUSEADDR, 1)
+        server_socket.bind(('', 80))
         server_socket.listen(1)
-        print("Connect to", self.ap_ssid, "with the password", self.ap_password, "and access the captive portal at", self.wlan_ap.ifconfig()[0])
+        print('Connect to', self.ap_ssid, 'with the password', self.ap_password, 'and access the captive portal at', self.wlan_ap.ifconfig()[0])
         while True:
             if self.wlan_sta.isconnected():
-                # Once we succeed to connect, we don't need the access point anymore.
-                print("Deactivating access point...")
                 self.wlan_ap.active(False)
-                return True
+                if self.reboot:
+                    print('The device will reboot in 5 seconds.')
+                    utime.sleep(5)
+                    machine.reset()
+                return
             self.client, addr = server_socket.accept()
-            print("Client connected from:", addr)
             try:
                 self.client.settimeout(5.0)
-                self.request = b""
+                self.request = b''
                 try:
                     while True:
-                        if "\r\n\r\n" in self.request:
-                            # Fix for Safari
+                        if '\r\n\r\n' in self.request:
+                            # Fix for Safari browser
                             self.request += self.client.recv(512)
                             break
                         self.request += self.client.recv(128)
-                except OSError as e:
-                    print(e)
+                except OSError:
+                    # It's normal to receive timeout errors in this stage, we can safely ignore them.
                     pass
-                # Avoid blank requests.
                 if self.request:
-                    print("REQUEST DATA:", self.request)
-                    # Here we regex search for the specific url in the request string, and then proceed as needed.
-                    url = ure.search("(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP", self.request).group(1).decode("utf-8").rstrip("/")
-                    if url == "":
-                        self.handle_root()
-                    elif url == "configure":
-                        self.handle_configure()
+                    url = ure.search('(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP', self.request).group(1).decode('utf-8').rstrip('/')
+                    if url == '':
+                        self.__HandleRoot()
+                    elif url == 'configure':
+                        self.__HandleConfigure()
                     else:
-                        self.handle_not_found()
-            except Exception as e:
-                print(e)
-                return False
+                        self.__HandleNotFound()
+            except Exception:
+                print('Something went wrong! Reboot and try again.')
+                return
             finally:
                 self.client.close()
 
-    def send_header(self, status_code = 200):
-        self.client.send("HTTP/1.1 {0} OK\r\n".format(status_code))
-        self.client.send("Content-Type: text/html\r\n")
-        self.client.send("Connection: close\r\n")
 
-    def send_response(self, message, status_code = 200):
-        self.send_header(status_code)
+    def __SendHeader(self, status_code = 200):
+        self.client.send("""HTTP/1.1 {0} OK\r\n""".format(status_code))
+        self.client.send("""Content-Type: text/html\r\n""")
+        self.client.send("""Connection: close\r\n""")
+
+
+    def __SendResponse(self, payload, status_code = 200):
+        self.__SendHeader(status_code)
         self.client.sendall("""
             <!DOCTYPE html>
             <html lang="en">
                 <head>
-                    <title>{0}</title>
+                    <title>WiFi Manager</title>
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1">
                     <link rel="icon" href="data:,">
                 </head>
                 <body>
-                    <p>{1}</p>
+                    {0}
                 </body>
             </html>
-        """.format(self.ap_ssid, message))
+        """.format(payload))
         self.client.close()
 
-    def handle_root(self):
-        self.send_header()
+
+    def __HandleRoot(self):
+        self.__SendHeader()
         self.client.sendall("""
             <!DOCTYPE html>
             <html lang="en">
                 <head>
-                    <title>{0}</title>
+                    <title>WiFi Manager</title>
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1">
                     <link rel="icon" href="data:,">
                 </head>
                 <body>
-                    <h1>WiFi Setup</h1>
-                    <p>To connect to an open network, leave the password field blank.</p>
+                    <h1>{0}</h1>
                     <form action="/configure" method="post" accept-charset="utf-8">
         """.format(self.ap_ssid))
         for ssid, *_ in self.wlan_sta.scan():
@@ -198,26 +207,28 @@ class WifiManager:
         """)
         self.client.close()
 
-    def handle_configure(self):
-        match = ure.search("ssid=([^&]*)&password=(.*)", self.request)
-        if match:
-            ssid = match.group(1).decode("utf-8").replace("%3F", "?").replace("%21", "!").replace("%23", "#")
-            password = match.group(2).decode("utf-8").replace("%3F", "?").replace("%21", "!")
-            if len(ssid) == 0:
-                self.send_response("SSID must be providaded!", 400)
-            elif self.wifi_connect(ssid, password):
-                self.send_response("Successfully connected to {0}! IP address: {1}".format(ssid, self.wlan_sta.ifconfig()[0]))
-                profiles = self.read_profiles()
-                profiles[ssid] = password
-                self.write_profiles(profiles)
-                time.sleep(5)
-            else:
-                self.send_response("Could not connect to {0}! Go back and try again!".format(ssid))
-                time.sleep(5)
-        else:
-            self.send_response("Parameters not found!", 400)
-            time.sleep(5)
 
-    def handle_not_found(self):
-        self.send_response("Path not found!", 404)
-        time.sleep(5)
+    def __HandleConfigure(self):
+        match = ure.search('ssid=([^&]*)&password=(.*)', self.request)
+        if match:
+            ssid = match.group(1).decode('utf-8').replace('%3F', '?').replace('%21', '!').replace('%23', '#')
+            password = match.group(2).decode('utf-8').replace('%3F', '?').replace('%21', '!')
+            if len(ssid) == 0:
+                self.__SendResponse("""<p>SSID must be providaded!</p><p>Go back and try again!</p>""", 400)
+            elif self.__WifiConnect(ssid, password):
+                self.__SendResponse("""<p>Successfully connected to</p><h1>{0}</h1><p>IP address: {1}</p>""".format(ssid, self.wlan_sta.ifconfig()[0]))
+                profiles = self.__ReadProfiles()
+                profiles[ssid] = password
+                self.__WriteProfiles(profiles)
+                utime.sleep(5)
+            else:
+                self.__SendResponse("""<p>Could not connect to</p><h1>{0}</h1><p>Go back and try again!</p>""".format(ssid))
+                utime.sleep(5)
+        else:
+            self.__SendResponse("""<p>Parameters not found!</p>""", 400)
+            utime.sleep(5)
+
+
+    def __HandleNotFound(self):
+        self.__SendResponse("""<p>Path not found!</p>""", 404)
+        utime.sleep(5)
