@@ -1,7 +1,9 @@
 # Author: Igor Ferreira
 # License: MIT
-# Version: 2.0.0
+# Version: 2.0.1
 # Description: WiFi Manager for ESP8266 and ESP32 using MicroPython.
+
+# AP Connection leads to server IP of http://192.168.4.1/ for configuration
 
 import machine
 import network
@@ -9,14 +11,18 @@ import usocket
 import ure
 import utime
 
+import cryptolib
+import ubinascii
 
 class WifiManager:
-
+    SECRET_KEY = "somesecret"  # Modify this code to 'personalize' the key...
+    DELIMITER = ',' # Should be a char that does NOT appear in Base64 ..
+    
     def __init__(self, ssid = 'WifiManager', password = 'wifimanager'):
         self.wlan_sta = network.WLAN(network.STA_IF)
         self.wlan_sta.active(True)
         self.wlan_ap = network.WLAN(network.AP_IF)
-        
+
         # Avoids simple mistakes with wifi ssid and password lengths, but doesn't check for forbidden or unsupported characters.
         if len(ssid) > 32:
             raise Exception('The SSID cannot be longer than 32 characters.')
@@ -26,21 +32,32 @@ class WifiManager:
             raise Exception('The password cannot be less than 8 characters long.')
         else:
             self.ap_password = password
-            
+
+        secret = WifiManager.SECRET_KEY
+        secret = secret + "X" * (32-len(secret)%32) # Padding the secret to make 32 multiple
+        
+        self.crypto_encr = cryptolib.aes(bytes(secret, 'utf-8'), 1)
+        self.crypto_decr = cryptolib.aes(bytes(secret, 'utf-8'), 1) # an instance can be used either for encryption / decryption ...
+        
         # Set the access point authentication mode to WPA2-PSK.
         self.ap_authmode = 3
-        
-        # The file were the credentials will be stored.
-        # There is no encryption, it's just a plain text archive. Be aware of this security problem!
+
+        # The file where the credentials will be stored.
         self.sta_profiles = 'wifi.dat'
-        
+
         # Prevents the device from automatically trying to connect to the last saved network without first going through the steps defined in the code.
         self.wlan_sta.disconnect()
-        
+
         # Change to True if you want the device to reboot after configuration.
         # Useful if you're having problems with web server applications after WiFi configuration.
         self.reboot = False
 
+    def pad_password(self, password):
+        return password + " "*(16 - len(password)%16)
+    
+    def unpad_password(self, password):
+        return password.strip()
+    
 
     def connect(self):
         if self.wlan_sta.isconnected():
@@ -54,8 +71,8 @@ class WifiManager:
                     return
         print('Could not connect to any WiFi network. Starting the configuration portal...')
         self.__WebServer()
-        
-    
+
+
     def disconnect(self):
         if self.wlan_sta.isconnected():
             self.wlan_sta.disconnect()
@@ -72,22 +89,31 @@ class WifiManager:
     def __WriteProfiles(self, profiles):
         lines = []
         for ssid, password in profiles.items():
-            lines.append('{0};{1}\n'.format(ssid, password))
+            try:
+                lines.append('{0}{1}{2}'.format(ssid, WifiManager.DELIMITER, ubinascii.b2a_base64(self.crypto_encr.encrypt(self.pad_password(password))).decode() ))
+            except Exception as e:
+                print(e)
+            
         with open(self.sta_profiles, 'w') as myfile:
-            myfile.write(''.join(lines))
+            myfile.write('\n'.join(lines))
 
 
     def __ReadProfiles(self):
         try:
             with open(self.sta_profiles) as myfile:
                 lines = myfile.readlines()
+            print("Found {0} entries in file\n".format(len(lines)))
         except OSError:
             lines = []
             pass
+        
         profiles = {}
         for line in lines:
-            ssid, password = line.strip().split(';')
-            profiles[ssid] = password
+            ssid, password = line.strip().split(WifiManager.DELIMITER)
+            try:
+                profiles[ssid] = self.unpad_password(self.crypto_decr.decrypt(ubinascii.a2b_base64(password)).decode())
+            except Exception as e:
+                print(e)
         return profiles
 
 
@@ -105,7 +131,7 @@ class WifiManager:
         self.wlan_sta.disconnect()
         return False
 
-    
+
     def __WebServer(self):
         self.wlan_ap.active(True)
         self.wlan_ap.config(essid = self.ap_ssid, password = self.ap_password, authmode = self.ap_authmode)
@@ -214,7 +240,7 @@ class WifiManager:
             ssid = match.group(1).decode('utf-8').replace('%3F', '?').replace('%21', '!').replace('%23', '#')
             password = match.group(2).decode('utf-8').replace('%3F', '?').replace('%21', '!')
             if len(ssid) == 0:
-                self.__SendResponse("""<p>SSID must be providaded!</p><p>Go back and try again!</p>""", 400)
+                self.__SendResponse("""<p>SSID must be provided!</p><p>Go back and try again!</p>""", 400)
             elif self.__WifiConnect(ssid, password):
                 self.__SendResponse("""<p>Successfully connected to</p><h1>{0}</h1><p>IP address: {1}</p>""".format(ssid, self.wlan_sta.ifconfig()[0]))
                 profiles = self.__ReadProfiles()
