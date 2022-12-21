@@ -42,8 +42,7 @@ class WifiManager:
         # Set the access point authentication mode to WPA2-PSK.
         self.ap_authmode = 3
 
-        # The file were the credentials will be stored.
-        # There is no encryption, it's just a plain text archive. Be aware of this security problem!
+        # The file where the credentials will be stored.
         self.sta_profiles = 'wifi.dat'
 
         # Prevents the device from automatically trying to connect to the last saved network without first going through the steps defined in the code.
