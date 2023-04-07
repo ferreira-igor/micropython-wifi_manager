@@ -41,7 +41,7 @@ wm = WifiManager()
 
 # By default the SSID is WiFiManager and the password is wifimanager.
 # You can customize the SSID and password of the AP for your needs:
-wm = WifiManager('my ssid', 'my password')
+wm = WifiManager(ssid="my ssid",password="my password")
 
 # Start the connection:
 wm.connect()
@@ -68,7 +68,6 @@ Returns a tuple with the network interface parameters: IP address, subnet mask, 
 ## Notes
 
 - Do not use this library with other ones that works directly with the network interface, since it might have conflicts;
-- If you want to enable the reboot after configuration, change the **self.reboot** parameter inside the *wifi_manager.py* file to **True**.
 
 ## Thanks To
 
