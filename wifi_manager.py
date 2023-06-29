@@ -217,10 +217,11 @@ class WifiManager:
 
 
     def handle_configure(self):
-        match = re.search('ssid=([^&]*)&password=(.*)', self.url_decode(self.request))
-        if match:
-            ssid = match.group(1).decode('utf-8')
-            password = match.group(2).decode('utf-8')
+        body = self.url_decode(self.request).decode('utf-8').split('\r\n').pop()
+        params = {x[0] : x[1] for x in [x.split("=") for x in body.split("&") ]}
+        if 'ssid' in params:
+            ssid = params['ssid']
+            password = params['password']
             if len(ssid) == 0:
                 self.send_response("""
                     <p>SSID must be providaded!</p>
