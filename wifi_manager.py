@@ -146,10 +146,13 @@ class WifiManager:
                 if self.request:
                     if self.debug:
                         print(self.url_decode(self.request))
-                    url = re.search('(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP', self.request).group(1).decode('utf-8').rstrip('/')
-                    if url == '':
+                    request_line = self.request.decode('utf-8').split('\r\n').pop(0)
+                    path = request_line.split()[1] if request_line else None 
+                    if path is None:
+                        pass
+                    elif path == '/':
                         self.handle_root()
-                    elif url == 'configure':
+                    elif path == '/configure':
                         self.handle_configure()
                     else:
                         self.handle_not_found()
@@ -217,10 +220,11 @@ class WifiManager:
 
 
     def handle_configure(self):
-        match = re.search('ssid=([^&]*)&password=(.*)', self.url_decode(self.request))
-        if match:
-            ssid = match.group(1).decode('utf-8')
-            password = match.group(2).decode('utf-8')
+        body = self.url_decode(self.request).decode('utf-8').split('\r\n').pop()
+        params = {x[0] : x[1] for x in [x.split("=") for x in body.split("&") ]} if body else {}
+        if 'ssid' in params:
+            ssid = params['ssid']
+            password = params['password']
             if len(ssid) == 0:
                 self.send_response("""
                     <p>SSID must be providaded!</p>
