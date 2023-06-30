@@ -147,10 +147,12 @@ class WifiManager:
                     if self.debug:
                         print(self.url_decode(self.request))
                     request_line = self.request.decode('utf-8').split('\r\n').pop(0)
-                    path = request_line.split()[1].strip("/") if request_line else ""                    
-                    if path == '':
+                    path = request_line.split()[1] if request_line else None 
+                    if path is None:
+                        pass
+                    elif path == '/':
                         self.handle_root()
-                    elif path == 'configure':
+                    elif path == '/configure':
                         self.handle_configure()
                     else:
                         self.handle_not_found()
