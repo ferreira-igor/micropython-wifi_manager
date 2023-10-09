@@ -11,38 +11,53 @@ import time
 
 
 class WifiManager:
+    DEFAULT_SSID = 'WifiManager'
+    DEFAULT_PASSWORD = 'wifimanager'
+    DEFAULT_REBOOT = True
+    DEFAULT_DEBUG = False
 
-    def __init__(self, ssid = 'WifiManager', password = 'wifimanager', reboot = True, debug = False):
+    def __init__(self, ssid=None, password=None, reboot=None, debug=None):
+        self.ssid = ssid if ssid is not None else self.DEFAULT_SSID
+        self.password = password if password is not None else self.DEFAULT_PASSWORD
+        self.reboot = reboot if reboot is not None else self.DEFAULT_REBOOT
+        self.debug = debug if debug is not None else self.DEFAULT_DEBUG
         self.wlan_sta = network.WLAN(network.STA_IF)
         self.wlan_sta.active(True)
         self.wlan_ap = network.WLAN(network.AP_IF)
-        
+
         # Avoids simple mistakes with wifi ssid and password lengths, but doesn't check for forbidden or unsupported characters.
         if len(ssid) > 32:
             raise Exception('The SSID cannot be longer than 32 characters.')
         else:
             self.ap_ssid = ssid
         if len(password) < 8:
-            raise Exception('The password cannot be less than 8 characters long.')
+            raise Exception(
+                'The password cannot be less than 8 characters long.')
         else:
             self.ap_password = password
-            
+
         # Set the access point authentication mode to WPA2-PSK.
         self.ap_authmode = 3
-        
+
         # The file were the credentials will be stored.
         # There is no encryption, it's just a plain text archive. Be aware of this security problem!
         self.wifi_credentials = 'wifi.dat'
-        
+
         # Prevents the device from automatically trying to connect to the last saved network without first going through the steps defined in the code.
         self.wlan_sta.disconnect()
-        
+
         # Change to True if you want the device to reboot after configuration.
         # Useful if you're having problems with web server applications after WiFi configuration.
         self.reboot = reboot
-        
+
         self.debug = debug
 
+    def reset_wifi_credentials(self):
+        self.ssid = self.DEFAULT_SSID
+        self.ap_ssid = self.DEFAULT_SSID
+        self.password = self.DEFAULT_PASSWORD
+        self.ap_password = self.DEFAULT_PASSWORD
+        print(f'Wifi credential reset to {self.ssid} and {self.password}.')
 
     def connect(self):
         if self.wlan_sta.isconnected():
@@ -56,20 +71,16 @@ class WifiManager:
                     return
         print('Could not connect to any WiFi network. Starting the configuration portal...')
         self.web_server()
-        
-    
+
     def disconnect(self):
         if self.wlan_sta.isconnected():
             self.wlan_sta.disconnect()
 
-
     def is_connected(self):
         return self.wlan_sta.isconnected()
 
-
     def get_address(self):
         return self.wlan_sta.ifconfig()
-
 
     def write_credentials(self, profiles):
         lines = []
@@ -77,7 +88,6 @@ class WifiManager:
             lines.append('{0};{1}\n'.format(ssid, password))
         with open(self.wifi_credentials, 'w') as file:
             file.write(''.join(lines))
-
 
     def read_credentials(self):
         lines = []
@@ -94,32 +104,34 @@ class WifiManager:
             profiles[ssid] = password
         return profiles
 
-
     def wifi_connect(self, ssid, password):
         print('Trying to connect to:', ssid)
         self.wlan_sta.connect(ssid, password)
         for _ in range(100):
             if self.wlan_sta.isconnected():
-                print('\nConnected! Network information:', self.wlan_sta.ifconfig())
+                print('\nConnected! Network information:',
+                      self.wlan_sta.ifconfig())
                 return True
             else:
                 print('.', end='')
-                time.sleep_ms(100)
+                time.sleep_ms(200)
         print('\nConnection failed!')
         self.wlan_sta.disconnect()
+        self.reset_wifi_credentials()
         return False
 
-    
     def web_server(self):
         self.wlan_ap.active(True)
-        self.wlan_ap.config(essid = self.ap_ssid, password = self.ap_password, authmode = self.ap_authmode)
+        self.wlan_ap.config(
+            essid=self.ap_ssid, password=self.ap_password, authmode=self.ap_authmode)
         server_socket = socket.socket()
         server_socket.close()
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind(('', 80))
         server_socket.listen(1)
-        print('Connect to', self.ap_ssid, 'with the password', self.ap_password, 'and access the captive portal at', self.wlan_ap.ifconfig()[0])
+        print('Connect to', self.ap_ssid, 'with the password', self.ap_password,
+              'and access the captive portal at', self.wlan_ap.ifconfig()[0])
         while True:
             if self.wlan_sta.isconnected():
                 self.wlan_ap.active(False)
@@ -146,7 +158,8 @@ class WifiManager:
                 if self.request:
                     if self.debug:
                         print(self.url_decode(self.request))
-                    url = re.search('(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP', self.request).group(1).decode('utf-8').rstrip('/')
+                    url = re.search('(?:GET|POST) /(.*?)(?:\\?.*?)? HTTP',
+                                    self.request).group(1).decode('utf-8').rstrip('/')
                     if url == '':
                         self.handle_root()
                     elif url == 'configure':
@@ -160,14 +173,12 @@ class WifiManager:
             finally:
                 self.client.close()
 
-
-    def send_header(self, status_code = 200):
+    def send_header(self, status_code=200):
         self.client.send("""HTTP/1.1 {0} OK\r\n""".format(status_code))
         self.client.send("""Content-Type: text/html\r\n""")
         self.client.send("""Connection: close\r\n""")
 
-
-    def send_response(self, payload, status_code = 200):
+    def send_response(self, payload, status_code=200):
         self.send_header(status_code)
         self.client.sendall("""
             <!DOCTYPE html>
@@ -184,7 +195,6 @@ class WifiManager:
             </html>
         """.format(payload))
         self.client.close()
-
 
     def handle_root(self):
         self.send_header()
@@ -215,9 +225,9 @@ class WifiManager:
         """)
         self.client.close()
 
-
     def handle_configure(self):
-        match = re.search('ssid=([^&]*)&password=(.*)', self.url_decode(self.request))
+        match = re.search('ssid=([^&]*)&password=(.*)',
+                          self.url_decode(self.request))
         if match:
             ssid = match.group(1).decode('utf-8')
             password = match.group(2).decode('utf-8')
@@ -249,12 +259,10 @@ class WifiManager:
             """, 400)
             time.sleep(5)
 
-
     def handle_not_found(self):
         self.send_response("""
             <p>Page not found!</p>
         """, 404)
-
 
     def url_decode(self, url_string):
 
